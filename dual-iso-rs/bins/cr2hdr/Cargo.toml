@@ -1,0 +1,17 @@
+[package]
+name    = "cr2hdr"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[[bin]]
+name = "cr2hdr"
+path = "src/main.rs"
+
+[dependencies]
+dual-iso-core      = { workspace = true }
+clap               = { workspace = true }
+anyhow             = { workspace = true }
+rayon              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
