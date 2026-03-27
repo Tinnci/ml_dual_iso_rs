@@ -97,6 +97,23 @@ impl RawBuffer {
 
 // ─── Raw image metadata ─────────────────────────────────────────────────────
 
+/// Camera/shot EXIF information extracted from the raw file.
+#[derive(Debug, Clone, Default)]
+pub struct ExifInfo {
+    /// Shutter speed as a human-readable fraction, e.g. "1/500".
+    pub exposure_time: Option<String>,
+    /// Aperture, e.g. "f/2.8".
+    pub fnumber: Option<String>,
+    /// ISO sensitivity, e.g. 1600.
+    pub iso: Option<u32>,
+    /// Focal length in mm, e.g. "50 mm".
+    pub focal_length: Option<String>,
+    /// Original capture date/time string from EXIF.
+    pub date_time_original: Option<String>,
+    /// Lens make/model.
+    pub lens_model: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RawMetadata {
     pub black_level: u16,
@@ -113,6 +130,8 @@ pub struct RawMetadata {
     pub bits_per_pixel: u8,
     /// Original EXIF blob (embedded verbatim in output DNG).
     pub exif_blob: Vec<u8>,
+    /// Decoded EXIF fields for display.
+    pub exif: ExifInfo,
 }
 
 impl Default for RawMetadata {
@@ -132,6 +151,7 @@ impl Default for RawMetadata {
             camera_model: String::new(),
             bits_per_pixel: 14,
             exif_blob: Vec::new(),
+            exif: ExifInfo::default(),
         }
     }
 }

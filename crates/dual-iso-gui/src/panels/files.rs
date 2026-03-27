@@ -13,26 +13,53 @@ impl FilesPanel {
         }
 
         let mut remove_idx: Option<usize> = None;
+        let mut load_exif_for: Option<std::path::PathBuf> = None;
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (i, path) in app.files.iter().enumerate() {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.display().to_string());
+        egui::ScrollArea::vertical()
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for (i, path) in app.files.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
 
-                ui.horizontal(|ui| {
-                    ui.label(&name).on_hover_text(path.display().to_string());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            remove_idx = Some(i);
+                    let selected = app.selected_file == Some(i);
+                    ui.horizontal(|ui| {
+                        let resp = ui
+                            .selectable_label(selected, &name)
+                            .on_hover_text(path.display().to_string());
+                        if resp.clicked() {
+                            app.selected_file = Some(i);
+                            if !app.exif_cache.contains_key(path) {
+                                load_exif_for = Some(path.clone());
+                            }
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕").clicked() {
+                                remove_idx = Some(i);
+                            }
+                        });
                     });
-                });
-            }
-        });
+                }
+            });
+
+        // Kick off a blocking EXIF read on a background thread.
+        if let Some(p) = load_exif_for {
+            let path_clone = p.clone();
+            let tx = app.exif_tx.clone();
+            std::thread::spawn(move || {
+                let raw = dual_iso_core::raw_io::read_raw(&path_clone);
+                if let Ok(img) = raw {
+                    let _ = tx.send((path_clone, img.meta.exif));
+                }
+            });
+        }
 
         if let Some(i) = remove_idx {
+            if app.selected_file == Some(i) {
+                app.selected_file = None;
+            }
             app.files.remove(i);
         }
     }

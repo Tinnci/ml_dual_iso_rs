@@ -2,6 +2,18 @@ use crate::types::{IsoLinePattern, ProcessConfig, RawBuffer};
 
 const EV_RES: i32 = crate::types::EV_RESOLUTION;
 
+/// Parameters for [`blend_iso_planes`].
+pub struct BlendParams<'a> {
+    pub bright: &'a RawBuffer,
+    pub dark: &'a RawBuffer,
+    pub _pattern: &'a IsoLinePattern,
+    pub _config: &'a ProcessConfig,
+    pub ev2raw: &'a [u16],
+    pub raw2ev: &'a [i32],
+    pub black_level: u16,
+    pub white_level: u16,
+}
+
 /// Blend the bright (high-ISO) and dark (low-ISO) Bayer planes into a
 /// single 16-bit HDR buffer.
 ///
@@ -12,18 +24,16 @@ const EV_RES: i32 = crate::types::EV_RESOLUTION;
 ///   - For pixels well above the dark plane's noise floor, use the dark
 ///     (highlight-rich) values.
 ///   - Use a smooth sigmoid transition in the crossover region.
-pub fn blend_iso_planes(
-    bright: &RawBuffer,
-    dark: &RawBuffer,
-    _pattern: &IsoLinePattern,
-    _config: &ProcessConfig,
-    ev2raw: &[u16],
-    raw2ev: &[i32],
-    black_level: u16,
-    white_level: u16,
-) -> RawBuffer {
-    assert_eq!(bright.width, dark.width);
-    assert_eq!(bright.height, dark.height);
+pub fn blend_iso_planes(p: BlendParams<'_>) -> RawBuffer {
+    let BlendParams {
+        bright,
+        dark,
+        ev2raw,
+        raw2ev,
+        black_level,
+        white_level,
+        ..
+    } = p;
 
     let w = bright.width;
     let h = bright.height;

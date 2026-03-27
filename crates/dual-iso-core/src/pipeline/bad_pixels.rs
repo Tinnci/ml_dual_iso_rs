@@ -59,7 +59,7 @@ fn neighbourhood_median_same_channel(buf: &RawBuffer, cx: usize, cy: usize, radi
     median_u16(&mut vals)
 }
 
-fn median_u16(v: &mut Vec<u16>) -> u16 {
+fn median_u16(v: &mut [u16]) -> u16 {
     if v.is_empty() {
         return 0;
     }

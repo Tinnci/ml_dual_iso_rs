@@ -39,16 +39,16 @@ pub fn process(raw: RawImage, config: &ProcessConfig) -> Result<RawImage, DualIs
     let dark_interp = interpolate::interpolate(&dark_buf, config, &raw.meta, &ev2raw, &raw2ev);
 
     tracing::info!("blending dual-ISO planes");
-    let mut blended = blend::blend_iso_planes(
-        &bright_interp,
-        &dark_interp,
-        &pattern,
-        config,
-        &ev2raw,
-        &raw2ev,
-        raw.meta.black_level,
-        raw.meta.white_level,
-    );
+    let mut blended = blend::blend_iso_planes(blend::BlendParams {
+        bright: &bright_interp,
+        dark: &dark_interp,
+        _pattern: &pattern,
+        _config: config,
+        ev2raw: &ev2raw,
+        raw2ev: &raw2ev,
+        black_level: raw.meta.black_level,
+        white_level: raw.meta.white_level,
+    });
 
     if config.chroma_smooth != ChromaSmoothSize::None {
         tracing::info!("chroma smoothing ({:?})", config.chroma_smooth);

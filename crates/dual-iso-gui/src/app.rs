@@ -1,11 +1,12 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use dual_iso_core::ProcessConfig;
+use dual_iso_core::{ExifInfo, ProcessConfig};
 use egui::DroppedFile;
 
-use crate::panels::{FilesPanel, ProgressPanel, SettingsPanel};
+use crate::panels::{ExifPanel, FilesPanel, ProgressPanel, SettingsPanel};
 
 // ─── Task progress ───────────────────────────────────────────────────────────
 
@@ -37,23 +38,36 @@ pub struct App {
     pub status: AppStatus,
     pub progress_msg: String,
     pub log: Vec<String>,
+    /// Index of the currently selected file in the list.
+    pub selected_file: Option<usize>,
+    /// EXIF metadata cache: path → ExifInfo.
+    pub exif_cache: HashMap<PathBuf, ExifInfo>,
+    /// Sender half for background EXIF loads (files.rs uses this).
+    pub exif_tx: Sender<(PathBuf, ExifInfo)>,
 
     // Channel for background thread → UI communication.
     msg_rx: Receiver<TaskMsg>,
     msg_tx: Sender<TaskMsg>,
+    // Channel for EXIF background loads.
+    exif_rx: Receiver<(PathBuf, ExifInfo)>,
 }
 
 impl App {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<TaskMsg>();
+        let (exif_tx, exif_rx) = std::sync::mpsc::channel::<(PathBuf, ExifInfo)>();
         Self {
             files: Vec::new(),
             config: ProcessConfig::default(),
             status: AppStatus::Idle,
             progress_msg: String::new(),
             log: Vec::new(),
+            selected_file: None,
+            exif_cache: HashMap::new(),
+            exif_tx,
             msg_rx: rx,
             msg_tx: tx,
+            exif_rx,
         }
     }
 
@@ -145,6 +159,10 @@ impl App {
                 }
             }
         }
+        // Drain completed EXIF loads.
+        for (path, exif) in self.exif_rx.try_iter() {
+            self.exif_cache.insert(path, exif);
+        }
     }
 }
 
@@ -194,11 +212,14 @@ impl eframe::App for App {
             ProgressPanel::show(self, ui, &ctx);
         });
 
-        // Left: file list.
+        // Left: file list + EXIF info.
         egui::Panel::left("files")
             .default_size(340.0)
             .show_inside(ui, |ui| {
                 FilesPanel::show(self, ui);
+                ui.add_space(8.0);
+                ui.separator();
+                ExifPanel::show(self, ui);
             });
 
         // Right: settings.

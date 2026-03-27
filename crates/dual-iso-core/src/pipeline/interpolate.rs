@@ -49,7 +49,7 @@ fn interp_mean23(buf: &RawBuffer) -> RawBuffer {
         for x in 0..w {
             let a = buf.pixel(x, y) as u32;
             let b = buf.pixel(x, y + 1) as u32;
-            out.set_pixel(x, y_out, ((a + b + 1) / 2) as u16);
+            out.set_pixel(x, y_out, (a + b).div_ceil(2) as u16);
         }
     }
     // Last missing row: replicate the last known row.

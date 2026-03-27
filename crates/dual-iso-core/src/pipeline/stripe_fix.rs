@@ -36,8 +36,8 @@ pub fn fix_stripes(buf: &mut RawBuffer) {
     // Apply correction: subtract the accumulation of offsets from the
     // first non-zero row down.
     let mut cumulative = 0i32;
-    for y in 0..h {
-        cumulative += offsets[y];
+    for (y, &off) in offsets.iter().enumerate().take(h) {
+        cumulative += off;
         if cumulative == 0 {
             continue;
         }
@@ -48,7 +48,7 @@ pub fn fix_stripes(buf: &mut RawBuffer) {
     }
 }
 
-fn median_i32_mut(v: &mut Vec<i32>) -> i32 {
+fn median_i32_mut(v: &mut [i32]) -> i32 {
     if v.is_empty() {
         return 0;
     }

@@ -34,7 +34,7 @@ pub fn chroma_smooth(buf: &mut RawBuffer, size: ChromaSmoothSize, raw2ev: &[i32]
 
             // Collect neighbourhood samples.
             let r_max = 2 * ((radius / 2 + 1) as usize);
-            let half = (radius / 2) as i64;
+            let half = radius / 2;
             let mut med_r: Vec<i32> = Vec::with_capacity(r_max * r_max);
             let mut med_b: Vec<i32> = Vec::with_capacity(r_max * r_max);
 
@@ -92,7 +92,7 @@ fn ev2raw_safe(ev2raw: &[u16], ev: i32) -> u16 {
     ev2raw[idx]
 }
 
-fn median_i32(v: &mut Vec<i32>) -> i32 {
+fn median_i32(v: &mut [i32]) -> i32 {
     if v.is_empty() {
         return 0;
     }
