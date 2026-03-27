@@ -10,9 +10,9 @@ const EV_RES: i32 = crate::types::EV_RESOLUTION;
 pub fn chroma_smooth(buf: &mut RawBuffer, size: ChromaSmoothSize, raw2ev: &[i32], ev2raw: &[u16]) {
     let radius: i64 = match size {
         ChromaSmoothSize::None => return,
-        ChromaSmoothSize::TwoByTwo   => 2,
+        ChromaSmoothSize::TwoByTwo => 2,
         ChromaSmoothSize::ThreeByThree => 3,
-        ChromaSmoothSize::FiveByFive   => 5,
+        ChromaSmoothSize::FiveByFive => 5,
     };
 
     let w = buf.width;
@@ -23,12 +23,14 @@ pub fn chroma_smooth(buf: &mut RawBuffer, size: ChromaSmoothSize, raw2ev: &[i32]
     for y in (4..(h as i64 - 5)).step_by(2) {
         for x in (4..(w as i64 - 4)).step_by(2) {
             // Green average for the 2×2 block at (x,y).
-            let g1 = src.pixel_clamped(x + 1, y)     as usize;
-            let g2 = src.pixel_clamped(x,     y + 1) as usize;
+            let g1 = src.pixel_clamped(x + 1, y) as usize;
+            let g2 = src.pixel_clamped(x, y + 1) as usize;
             let ge = (raw2ev_safe(raw2ev, g1) + raw2ev_safe(raw2ev, g2)) / 2;
 
             // Skip very dark areas — noise there looks bad anyway.
-            if ge < 2 * EV_RES { continue; }
+            if ge < 2 * EV_RES {
+                continue;
+            }
 
             // Collect neighbourhood samples.
             let r_max = 2 * ((radius / 2 + 1) as usize);
@@ -45,10 +47,10 @@ pub fn chroma_smooth(buf: &mut RawBuffer, size: ChromaSmoothSize, raw2ev: &[i32]
                         j += 2;
                         continue;
                     }
-                    let r  = src.pixel_clamped(x + i,     y + j)     as usize;
-                    let g1 = src.pixel_clamped(x + i + 1, y + j)     as usize;
-                    let g2 = src.pixel_clamped(x + i,     y + j + 1) as usize;
-                    let b  = src.pixel_clamped(x + i + 1, y + j + 1) as usize;
+                    let r = src.pixel_clamped(x + i, y + j) as usize;
+                    let g1 = src.pixel_clamped(x + i + 1, y + j) as usize;
+                    let g2 = src.pixel_clamped(x + i, y + j + 1) as usize;
+                    let b = src.pixel_clamped(x + i + 1, y + j + 1) as usize;
                     let ge_local = (raw2ev_safe(raw2ev, g1) + raw2ev_safe(raw2ev, g2)) / 2;
                     med_r.push(raw2ev_safe(raw2ev, r) - ge_local);
                     med_b.push(raw2ev_safe(raw2ev, b) - ge_local);
@@ -60,12 +62,16 @@ pub fn chroma_smooth(buf: &mut RawBuffer, size: ChromaSmoothSize, raw2ev: &[i32]
             let dr = median_i32(&mut med_r);
             let db = median_i32(&mut med_b);
 
-            if ge + dr <= EV_RES { continue; }
-            if ge + db <= EV_RES { continue; }
+            if ge + dr <= EV_RES {
+                continue;
+            }
+            if ge + db <= EV_RES {
+                continue;
+            }
 
             let r_out = ev2raw_safe(ev2raw, ge + dr);
             let b_out = ev2raw_safe(ev2raw, ge + db);
-            buf.set_pixel(x as usize,     y as usize,     r_out);
+            buf.set_pixel(x as usize, y as usize, r_out);
             buf.set_pixel(x as usize + 1, y as usize + 1, b_out);
         }
     }
@@ -80,12 +86,16 @@ fn raw2ev_safe(raw2ev: &[i32], v: usize) -> i32 {
 fn ev2raw_safe(ev2raw: &[u16], ev: i32) -> u16 {
     const MIN_EV: i32 = -10 * EV_RES;
     let idx = (ev - MIN_EV).max(0) as usize;
-    if idx >= ev2raw.len() { return ev2raw[ev2raw.len() - 1]; }
+    if idx >= ev2raw.len() {
+        return ev2raw[ev2raw.len() - 1];
+    }
     ev2raw[idx]
 }
 
 fn median_i32(v: &mut Vec<i32>) -> i32 {
-    if v.is_empty() { return 0; }
+    if v.is_empty() {
+        return 0;
+    }
     v.sort_unstable();
     v[v.len() / 2]
 }

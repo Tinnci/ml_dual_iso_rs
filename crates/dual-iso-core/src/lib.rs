@@ -1,8 +1,8 @@
-pub mod error;
-pub mod types;
-pub mod raw_io;
-pub mod pipeline;
 pub mod dng_output;
+pub mod error;
+pub mod pipeline;
+pub mod raw_io;
+pub mod types;
 
 pub use error::DualIsoError;
 pub use types::*;
@@ -58,7 +58,10 @@ pub fn process(raw: RawImage, config: &ProcessConfig) -> Result<RawImage, DualIs
     let wb_multipliers = white_balance::compute_wb(&blended, &raw.meta, &config.white_balance);
     tracing::debug!(?wb_multipliers, "white balance");
 
-    let result = RawImage { buffer: blended, meta: raw.meta };
+    let result = RawImage {
+        buffer: blended,
+        meta: raw.meta,
+    };
     Ok(result)
 }
 

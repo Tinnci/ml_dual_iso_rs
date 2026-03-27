@@ -34,7 +34,11 @@ pub fn analyze_iso_lines(raw: &RawImage) -> Result<IsoLinePattern, DualIsoError>
     }
 
     let mean: [f64; 4] = std::array::from_fn(|i| {
-        if count[i] > 0 { sum[i] / count[i] as f64 } else { 0.0 }
+        if count[i] > 0 {
+            sum[i] / count[i] as f64
+        } else {
+            0.0
+        }
     });
 
     // The overall mean separates bright from dark phases.
@@ -47,23 +51,42 @@ pub fn analyze_iso_lines(raw: &RawImage) -> Result<IsoLinePattern, DualIsoError>
     }
 
     // Estimate ISO ratio from mean difference.
-    let bright_mean: f64 = mean.iter().zip(is_bright.iter())
-        .filter(|&(_, b)| *b).map(|(m, _)| m).sum::<f64>()
+    let bright_mean: f64 = mean
+        .iter()
+        .zip(is_bright.iter())
+        .filter(|&(_, b)| *b)
+        .map(|(m, _)| m)
+        .sum::<f64>()
         / bright_count as f64;
-    let dark_mean: f64 = mean.iter().zip(is_bright.iter())
-        .filter(|&(_, b)| !b).map(|(m, _)| m).sum::<f64>()
+    let dark_mean: f64 = mean
+        .iter()
+        .zip(is_bright.iter())
+        .filter(|&(_, b)| !b)
+        .map(|(m, _)| m)
+        .sum::<f64>()
         / (4 - bright_count) as f64;
 
-    let ratio = if dark_mean > 0.0 { (bright_mean / dark_mean).log2().round() as u32 } else { 3 };
+    let ratio = if dark_mean > 0.0 {
+        (bright_mean / dark_mean).log2().round() as u32
+    } else {
+        3
+    };
     let iso_highlight = 100u32 * (1 << ratio);
     let iso_lowlight = 100u32;
 
     tracing::debug!(
-        ?mean, ?is_bright, iso_lowlight, iso_highlight,
+        ?mean,
+        ?is_bright,
+        iso_lowlight,
+        iso_highlight,
         "ISO line detection"
     );
 
-    Ok(IsoLinePattern { is_bright, iso_lowlight, iso_highlight })
+    Ok(IsoLinePattern {
+        is_bright,
+        iso_lowlight,
+        iso_highlight,
+    })
 }
 
 #[cfg(test)]
@@ -83,7 +106,10 @@ mod tests {
                 buf.set_pixel(x, y, if bright { 8000 } else { 2000 });
             }
         }
-        let raw = RawImage { buffer: buf, meta: RawMetadata::default() };
+        let raw = RawImage {
+            buffer: buf,
+            meta: RawMetadata::default(),
+        };
         let pat = analyze_iso_lines(&raw).unwrap();
         assert!(pat.is_bright[0]);
         assert!(pat.is_bright[1]);

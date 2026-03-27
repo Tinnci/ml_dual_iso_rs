@@ -10,8 +10,7 @@ pub fn read_raw(path: &Path) -> Result<RawImage, DualIsoError> {
     use rawler::rawimage::RawPhotometricInterpretation;
 
     // rawler's simplest public API: decode_file
-    let raw = rawler::decode_file(path)
-        .map_err(|e| DualIsoError::DecodeError(e.to_string()))?;
+    let raw = rawler::decode_file(path).map_err(|e| DualIsoError::DecodeError(e.to_string()))?;
 
     // Extract 16-bit pixel data.
     let (data, width, height) = match raw.data {
@@ -31,13 +30,17 @@ pub fn read_raw(path: &Path) -> Result<RawImage, DualIsoError> {
     let bayer_pattern = cfa_to_bayer(&cfa_name);
 
     // Black level: use the first rational value.
-    let black_level = raw.blacklevel.levels
+    let black_level = raw
+        .blacklevel
+        .levels
         .first()
         .map(|r| r.as_f32() as u16)
         .unwrap_or(0);
 
     // White level: first entry from the WhiteLevel wrapper.
-    let white_level = raw.whitelevel.0
+    let white_level = raw
+        .whitelevel
+        .0
         .first()
         .map(|&v| v.min(u16::MAX as u32) as u16)
         .unwrap_or(u16::MAX);
@@ -57,7 +60,14 @@ pub fn read_raw(path: &Path) -> Result<RawImage, DualIsoError> {
         exif_blob: Vec::new(),
     };
 
-    Ok(RawImage { buffer: RawBuffer { data, width, height }, meta })
+    Ok(RawImage {
+        buffer: RawBuffer {
+            data,
+            width,
+            height,
+        },
+        meta,
+    })
 }
 
 fn cfa_to_bayer(name: &str) -> BayerPattern {

@@ -11,7 +11,11 @@ use crate::panels::{FilesPanel, ProgressPanel, SettingsPanel};
 
 #[derive(Debug, Clone)]
 pub enum TaskMsg {
-    Progress { file: String, done: usize, total: usize },
+    Progress {
+        file: String,
+        done: usize,
+        total: usize,
+    },
     Done,
     Error(String),
 }
@@ -75,7 +79,8 @@ impl App {
 
         thread::spawn(move || {
             for (i, path) in files.iter().enumerate() {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
 
@@ -91,7 +96,8 @@ impl App {
                     let raw = dual_iso_core::raw_io::read_raw(path)?;
                     let processed = dual_iso_core::process(raw, &config)?;
                     let out = {
-                        let stem = path.file_stem()
+                        let stem = path
+                            .file_stem()
                             .and_then(|s| s.to_str())
                             .unwrap_or("output");
                         let dir = path.parent().unwrap_or(std::path::Path::new("."));
@@ -104,7 +110,10 @@ impl App {
                 match result {
                     Ok(out) => {
                         let _ = tx.send(TaskMsg::Progress {
-                            file: format!("✓ {name} → {}", out.file_name().unwrap_or_default().to_string_lossy()),
+                            file: format!(
+                                "✓ {name} → {}",
+                                out.file_name().unwrap_or_default().to_string_lossy()
+                            ),
                             done: i + 1,
                             total,
                         });
@@ -145,7 +154,8 @@ impl eframe::App for App {
 
         // Handle drag-and-drop.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw.dropped_files
+            i.raw
+                .dropped_files
                 .iter()
                 .filter_map(|f: &DroppedFile| f.path.clone())
                 .collect()

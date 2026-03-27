@@ -80,9 +80,9 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
     // ── Step 0: expand raw Bayer data into a float workspace ────────────────
     // We work in float throughout to avoid precision loss.
     let expanded_h = out_h;
-    let mut green  = vec![0f32; w * expanded_h];
-    let mut red    = vec![0f32; w * expanded_h];
-    let mut blue   = vec![0f32; w * expanded_h];
+    let mut green = vec![0f32; w * expanded_h];
+    let mut red = vec![0f32; w * expanded_h];
+    let mut blue = vec![0f32; w * expanded_h];
 
     // Copy known rows (even) and mark unknown rows (odd) as -1.
     for y in 0..h {
@@ -91,10 +91,26 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
             let v = buf.pixel(x, y) as f32;
             // RGGB pattern: (x%2, dy%2) → channel
             match (x % 2, dy % 2) {
-                (0, 0) => { red  [dy * w + x] = v; green[dy * w + x] = -1.0; blue[dy * w + x] = -1.0; }
-                (1, 0) => { green[dy * w + x] = v; red  [dy * w + x] = -1.0; blue[dy * w + x] = -1.0; }
-                (0, 1) => { green[dy * w + x] = v; red  [dy * w + x] = -1.0; blue[dy * w + x] = -1.0; }
-                (1, 1) => { blue [dy * w + x] = v; green[dy * w + x] = -1.0; red  [dy * w + x] = -1.0; }
+                (0, 0) => {
+                    red[dy * w + x] = v;
+                    green[dy * w + x] = -1.0;
+                    blue[dy * w + x] = -1.0;
+                }
+                (1, 0) => {
+                    green[dy * w + x] = v;
+                    red[dy * w + x] = -1.0;
+                    blue[dy * w + x] = -1.0;
+                }
+                (0, 1) => {
+                    green[dy * w + x] = v;
+                    red[dy * w + x] = -1.0;
+                    blue[dy * w + x] = -1.0;
+                }
+                (1, 1) => {
+                    blue[dy * w + x] = v;
+                    green[dy * w + x] = -1.0;
+                    red[dy * w + x] = -1.0;
+                }
                 _ => unreachable!(),
             }
         }
@@ -103,8 +119,8 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
         if dy1 < expanded_h {
             for x in 0..w {
                 green[dy1 * w + x] = -1.0;
-                red  [dy1 * w + x] = -1.0;
-                blue [dy1 * w + x] = -1.0;
+                red[dy1 * w + x] = -1.0;
+                blue[dy1 * w + x] = -1.0;
             }
         }
     }
@@ -112,40 +128,45 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
     // ── Step 1: interpolate missing rows with edge-directed weighting ────────
     // Borrow slices so they can be shared across rayon threads.
     let green_ref: &[f32] = &green;
-    let red_ref:   &[f32] = &red;
-    let blue_ref:  &[f32] = &blue;
+    let red_ref: &[f32] = &red;
+    let blue_ref: &[f32] = &blue;
 
-    let step1: Vec<(f32, f32, f32)> = (0..expanded_h).into_par_iter().flat_map(|y| {
-        (0..w).map(move |x| {
-            let bayer_y = y / 2;
-            let bayer_row = bayer_y * 2; // corresponding input row
+    let step1: Vec<(f32, f32, f32)> = (0..expanded_h)
+        .into_par_iter()
+        .flat_map(|y| {
+            (0..w)
+                .map(move |x| {
+                    let bayer_y = y / 2;
+                    let bayer_row = bayer_y * 2; // corresponding input row
 
-            // Known pixel — keep value.
-            if y % 2 == 0 {
-                let g = green_ref[y * w + x];
-                let r = red_ref  [y * w + x];
-                let b = blue_ref [y * w + x];
-                return (g, r, b);
-            }
+                    // Known pixel — keep value.
+                    if y % 2 == 0 {
+                        let g = green_ref[y * w + x];
+                        let r = red_ref[y * w + x];
+                        let b = blue_ref[y * w + x];
+                        return (g, r, b);
+                    }
 
-            // Interpolate this odd row from the two bracketing even rows.
-            let y0 = if bayer_row < expanded_h { bayer_row } else { expanded_h - 2 };
-            let y1 = (y0 + 2).min(expanded_h - 1);
+                    // Interpolate this odd row from the two bracketing even rows.
+                    let y0 = if bayer_row < expanded_h {
+                        bayer_row
+                    } else {
+                        expanded_h - 2
+                    };
+                    let y1 = (y0 + 2).min(expanded_h - 1);
 
-            let g0 = green_ref[y0 * w + x];
-            let g1 = green_ref[y1 * w + x];
-            let r0 = red_ref  [y0 * w + x];
-            let r1 = red_ref  [y1 * w + x];
-            let b0 = blue_ref [y0 * w + x];
-            let b1 = blue_ref [y1 * w + x];
+                    let g0 = green_ref[y0 * w + x];
+                    let g1 = green_ref[y1 * w + x];
+                    let r0 = red_ref[y0 * w + x];
+                    let r1 = red_ref[y1 * w + x];
+                    let b0 = blue_ref[y0 * w + x];
+                    let b1 = blue_ref[y1 * w + x];
 
-            (
-                avg_valid(g0, g1),
-                avg_valid(r0, r1),
-                avg_valid(b0, b1),
-            )
-        }).collect::<Vec<_>>()
-    }).collect();
+                    (avg_valid(g0, g1), avg_valid(r0, r1), avg_valid(b0, b1))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     // ── Step 2: fill in the missing Bayer channels per-pixel ─────────────
     let mut out = RawBuffer::new(w, expanded_h);
@@ -159,9 +180,27 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
             // for the missing channels we need demosaic interpolation.
             // Choose the channel whose Bayer position this is.
             let val = match (x % 2, y % 2) {
-                (0, 0) => if r >= 0.0 { r } else { avg_neighbors_red(&step1, x, y, w, expanded_h) },
-                (1, 0) | (0, 1) => if g >= 0.0 { g } else { avg_neighbors_green(&step1, x, y, w, expanded_h) },
-                (1, 1) => if b >= 0.0 { b } else { avg_neighbors_blue(&step1, x, y, w, expanded_h) },
+                (0, 0) => {
+                    if r >= 0.0 {
+                        r
+                    } else {
+                        avg_neighbors_red(&step1, x, y, w, expanded_h)
+                    }
+                }
+                (1, 0) | (0, 1) => {
+                    if g >= 0.0 {
+                        g
+                    } else {
+                        avg_neighbors_green(&step1, x, y, w, expanded_h)
+                    }
+                }
+                (1, 1) => {
+                    if b >= 0.0 {
+                        b
+                    } else {
+                        avg_neighbors_blue(&step1, x, y, w, expanded_h)
+                    }
+                }
                 _ => unreachable!(),
             };
 
@@ -175,9 +214,9 @@ fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBu
 #[inline]
 fn avg_valid(a: f32, b: f32) -> f32 {
     match (a >= 0.0, b >= 0.0) {
-        (true, true)   => (a + b) * 0.5,
-        (true, false)  => a,
-        (false, true)  => b,
+        (true, true) => (a + b) * 0.5,
+        (true, false) => a,
+        (false, true) => b,
         (false, false) => -1.0,
     }
 }
@@ -187,12 +226,17 @@ fn avg_neighbors_green(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h:
     let mut n = 0u32;
     for dy in [-2i64, 0, 2] {
         for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 { continue; }
+            if dx == 0 && dy == 0 {
+                continue;
+            }
             let nx = x as i64 + dx;
             let ny = y as i64 + dy;
             if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
                 let g = buf[(ny as usize) * w + (nx as usize)].0;
-                if g >= 0.0 { sum += g; n += 1; }
+                if g >= 0.0 {
+                    sum += g;
+                    n += 1;
+                }
             }
         }
     }
@@ -204,12 +248,17 @@ fn avg_neighbors_red(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h: u
     let mut n = 0u32;
     for dy in [-2i64, 0, 2] {
         for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 { continue; }
+            if dx == 0 && dy == 0 {
+                continue;
+            }
             let nx = x as i64 + dx;
             let ny = y as i64 + dy;
             if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
                 let r = buf[(ny as usize) * w + (nx as usize)].1;
-                if r >= 0.0 { sum += r; n += 1; }
+                if r >= 0.0 {
+                    sum += r;
+                    n += 1;
+                }
             }
         }
     }
@@ -221,12 +270,17 @@ fn avg_neighbors_blue(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h: 
     let mut n = 0u32;
     for dy in [-2i64, 0, 2] {
         for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 { continue; }
+            if dx == 0 && dy == 0 {
+                continue;
+            }
             let nx = x as i64 + dx;
             let ny = y as i64 + dy;
             if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
                 let b = buf[(ny as usize) * w + (nx as usize)].2;
-                if b >= 0.0 { sum += b; n += 1; }
+                if b >= 0.0 {
+                    sum += b;
+                    n += 1;
+                }
             }
         }
     }

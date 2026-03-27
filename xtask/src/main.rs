@@ -1,5 +1,5 @@
-use std::process::{Command, exit};
 use std::path::PathBuf;
+use std::process::{Command, exit};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,7 +30,14 @@ fn task_check() {
 
     println!("==> cargo clippy");
     let mut c = cargo();
-    c.args(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]);
+    c.args([
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ]);
     run(c);
 }
 
@@ -73,10 +80,10 @@ fn main() {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
         "check" => task_check(),
-        "fmt"   => task_fmt(),
-        "test"  => task_test(),
-        "dist"  => task_dist(),
-        other   => {
+        "fmt" => task_fmt(),
+        "test" => task_test(),
+        "dist" => task_dist(),
+        other => {
             eprintln!("Unknown xtask: {other:?}");
             eprintln!("Available tasks: check  fmt  test  dist");
             exit(1);

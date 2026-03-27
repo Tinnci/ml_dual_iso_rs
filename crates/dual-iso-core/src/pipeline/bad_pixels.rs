@@ -50,7 +50,9 @@ fn neighbourhood_median_same_channel(buf: &RawBuffer, cx: usize, cy: usize, radi
     let r = (radius as i64) * step;
     for dy in (-r..=r).step_by(step as usize) {
         for dx in (-r..=r).step_by(step as usize) {
-            if dx == 0 && dy == 0 { continue; }
+            if dx == 0 && dy == 0 {
+                continue;
+            }
             vals.push(buf.pixel_clamped(cx as i64 + dx, cy as i64 + dy));
         }
     }
@@ -58,7 +60,9 @@ fn neighbourhood_median_same_channel(buf: &RawBuffer, cx: usize, cy: usize, radi
 }
 
 fn median_u16(v: &mut Vec<u16>) -> u16 {
-    if v.is_empty() { return 0; }
+    if v.is_empty() {
+        return 0;
+    }
     v.sort_unstable();
     v[v.len() / 2]
 }

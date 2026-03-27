@@ -35,9 +35,9 @@ pub fn blend_iso_planes(
 
     // Blending crossover point: half the dynamic range of the bright plane
     // above black level.
-    let white_ev  = raw2ev_clamped(raw2ev, white_level as usize);
-    let black_ev  = raw2ev_clamped(raw2ev, black_level as usize);
-    let range_ev  = white_ev - black_ev;
+    let white_ev = raw2ev_clamped(raw2ev, white_level as usize);
+    let black_ev = raw2ev_clamped(raw2ev, black_level as usize);
+    let range_ev = white_ev - black_ev;
     // Crossover threshold in EV where we start preferring the dark plane.
     let crossover = black_ev + range_ev * 3 / 4;
     let blend_width = EV_RES * 2; // 2-stop transition zone
@@ -107,7 +107,9 @@ fn raw2ev_clamped(raw2ev: &[i32], v: usize) -> i32 {
 fn ev2raw_clamped(ev2raw: &[u16], ev: i32, black: u16, white: u16) -> u16 {
     const MIN_EV: i32 = -10 * EV_RES;
     let idx = (ev - MIN_EV).max(0) as usize;
-    if idx >= ev2raw.len() { return white; }
+    if idx >= ev2raw.len() {
+        return white;
+    }
     ev2raw[idx].clamp(black, white)
 }
 

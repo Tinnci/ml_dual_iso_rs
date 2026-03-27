@@ -144,25 +144,36 @@ enum InterpArg {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CsArg {
-    #[value(name = "2x2")]  TwoByTwo,
-    #[value(name = "3x3")]  ThreeByThree,
-    #[value(name = "5x5")]  FiveByFive,
-    #[value(name = "none")] None,
+    #[value(name = "2x2")]
+    TwoByTwo,
+    #[value(name = "3x3")]
+    ThreeByThree,
+    #[value(name = "5x5")]
+    FiveByFive,
+    #[value(name = "none")]
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum BadPixArg {
-    Normal, Aggressive, Disabled,
+    Normal,
+    Aggressive,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum WbArg {
-    Graymax, Graymed, Exif, Custom,
+    Graymax,
+    Graymed,
+    Exif,
+    Custom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CompressArg {
-    None, Lossless, Lossy,
+    None,
+    Lossless,
+    Lossy,
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -185,7 +196,8 @@ fn main() -> Result<()> {
     let config = build_config(&cli);
 
     // Process files in parallel (rayon).
-    let results: Vec<Result<PathBuf>> = cli.files
+    let results: Vec<Result<PathBuf>> = cli
+        .files
         .par_iter()
         .map(|path| process_file(path, &config))
         .collect();
@@ -194,11 +206,16 @@ fn main() -> Result<()> {
     for r in results {
         match r {
             Ok(out) => println!("  -> {}", out.display()),
-            Err(e) => { eprintln!("Error: {e:#}"); had_error = true; }
+            Err(e) => {
+                eprintln!("Error: {e:#}");
+                had_error = true;
+            }
         }
     }
 
-    if had_error { std::process::exit(1); }
+    if had_error {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -213,8 +230,7 @@ fn process_file(input: &Path, config: &ProcessConfig) -> Result<PathBuf> {
     }
 
     tracing::info!("reading {}", input.display());
-    let raw = read_raw(input)
-        .with_context(|| format!("reading {}", input.display()))?;
+    let raw = read_raw(input).with_context(|| format!("reading {}", input.display()))?;
 
     tracing::info!("processing");
     let processed = dual_iso_core::process(raw, config)
@@ -228,7 +244,8 @@ fn process_file(input: &Path, config: &ProcessConfig) -> Result<PathBuf> {
 }
 
 fn derive_output_path(input: &Path) -> Result<PathBuf> {
-    let stem = input.file_stem()
+    let stem = input
+        .file_stem()
         .and_then(|s| s.to_str())
         .context("input file has no stem")?;
     let dir = input.parent().unwrap_or(Path::new("."));
@@ -244,27 +261,27 @@ fn build_config(cli: &Cli) -> ProcessConfig {
 
     let interp_method = match cli.interp {
         InterpArg::AmazeEdge => InterpolationMethod::AmazeEdge,
-        InterpArg::Mean23    => InterpolationMethod::Mean23,
+        InterpArg::Mean23 => InterpolationMethod::Mean23,
     };
 
     let chroma_smooth = match cli.chroma_smooth {
-        CsArg::TwoByTwo       => ChromaSmoothSize::TwoByTwo,
-        CsArg::ThreeByThree   => ChromaSmoothSize::ThreeByThree,
-        CsArg::FiveByFive     => ChromaSmoothSize::FiveByFive,
-        CsArg::None           => ChromaSmoothSize::None,
+        CsArg::TwoByTwo => ChromaSmoothSize::TwoByTwo,
+        CsArg::ThreeByThree => ChromaSmoothSize::ThreeByThree,
+        CsArg::FiveByFive => ChromaSmoothSize::FiveByFive,
+        CsArg::None => ChromaSmoothSize::None,
     };
 
     let bad_pixels = match cli.bad_pix {
-        BadPixArg::Normal     => BadPixelFix::Normal,
+        BadPixArg::Normal => BadPixelFix::Normal,
         BadPixArg::Aggressive => BadPixelFix::Aggressive,
-        BadPixArg::Disabled   => BadPixelFix::Disabled,
+        BadPixArg::Disabled => BadPixelFix::Disabled,
     };
 
     let white_balance = match cli.wb {
         WbArg::Graymax => WhiteBalance::GrayMax,
         WbArg::Graymed => WhiteBalance::GrayMedian,
-        WbArg::Exif    => WhiteBalance::Exif,
-        WbArg::Custom  => {
+        WbArg::Exif => WhiteBalance::Exif,
+        WbArg::Custom => {
             let v = cli.wb_custom.as_deref().unwrap_or(&[1.0, 1.0, 1.0]);
             WhiteBalance::Custom(
                 *v.first().unwrap_or(&1.0),
@@ -275,9 +292,9 @@ fn build_config(cli: &Cli) -> ProcessConfig {
     };
 
     let compression = match cli.compression {
-        CompressArg::None     => Compression::None,
+        CompressArg::None => Compression::None,
         CompressArg::Lossless => Compression::Lossless,
-        CompressArg::Lossy    => Compression::Lossy,
+        CompressArg::Lossy => Compression::Lossy,
     };
 
     ProcessConfig {
@@ -286,21 +303,21 @@ fn build_config(cli: &Cli) -> ProcessConfig {
         bad_pixels,
         mark_bad_pixels_black: cli.black_bad_pix || cli.debug_bad_pix,
         white_balance,
-        use_fullres:   !cli.no_fullres,
+        use_fullres: !cli.no_fullres,
         use_alias_map: !cli.no_alias_map,
         use_stripe_fix: !cli.no_stripe_fix,
-        soft_film_ev:  cli.soft_film.unwrap_or(0.0),
+        soft_film_ev: cli.soft_film.unwrap_or(0.0),
         compression,
-        same_levels:   cli.same_levels,
+        same_levels: cli.same_levels,
         skip_existing: cli.skip_existing,
         embed_original: cli.embed_original,
         embed_original_copy: cli.embed_original_copy,
-        debug_blend:  cli.debug_blend,
-        debug_black:  cli.debug_black,
-        debug_amaze:  cli.debug_amaze,
-        debug_edge:   cli.debug_edge,
-        debug_alias:  cli.debug_alias,
+        debug_blend: cli.debug_blend,
+        debug_black: cli.debug_black,
+        debug_amaze: cli.debug_amaze,
+        debug_edge: cli.debug_edge,
+        debug_alias: cli.debug_alias,
         debug_bad_pixels: cli.debug_bad_pix,
-        debug_wb:     cli.debug_wb,
+        debug_wb: cli.debug_wb,
     }
 }

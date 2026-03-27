@@ -69,7 +69,11 @@ pub struct RawBuffer {
 
 impl RawBuffer {
     pub fn new(width: usize, height: usize) -> Self {
-        Self { data: vec![0u16; width * height], width, height }
+        Self {
+            data: vec![0u16; width * height],
+            width,
+            height,
+        }
     }
 
     #[inline]

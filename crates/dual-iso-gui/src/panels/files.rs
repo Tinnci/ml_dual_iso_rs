@@ -1,5 +1,5 @@
-use egui::Ui;
 use crate::app::App;
+use egui::Ui;
 
 pub struct FilesPanel;
 
@@ -16,7 +16,8 @@ impl FilesPanel {
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, path) in app.files.iter().enumerate() {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
 
