@@ -128,6 +128,29 @@ fn extract_exif(path: &Path) -> ExifInfo {
     }
 }
 
+/// Extract an embedded JPEG thumbnail from a RAW file.
+/// Returns `(width, height, rgb8_bytes)` on success, or `None` on any failure.
+pub fn extract_thumbnail(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
+    use image::GenericImageView;
+    use rawler::decoders::RawDecodeParams;
+    use rawler::rawsource::RawSource;
+
+    let source = RawSource::new(path).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let params = RawDecodeParams::default();
+
+    // Try thumbnail first, then preview.
+    let img = decoder
+        .thumbnail_image(&source, &params)
+        .ok()
+        .flatten()
+        .or_else(|| decoder.preview_image(&source, &params).ok().flatten())?;
+
+    let (w, h) = img.dimensions();
+    let rgb = img.to_rgb8();
+    Some((w, h, rgb.into_raw()))
+}
+
 fn cfa_to_bayer(name: &str) -> BayerPattern {
     match name.to_uppercase().as_str() {
         "RGGB" => BayerPattern::Rggb,

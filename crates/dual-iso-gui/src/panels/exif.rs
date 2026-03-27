@@ -23,9 +23,28 @@ impl ExifPanel {
         ui.label(egui::RichText::new(&name).strong());
         ui.add_space(4.0);
 
+        // ── Preview thumbnail ──────────────────────────────────────────────
+        if let Some(texture) = app.preview_cache.get(path) {
+            let avail_w = ui.available_width();
+            let [tw, th] = [texture.size()[0] as f32, texture.size()[1] as f32];
+            let scale = (avail_w / tw).min(1.0);
+            let size = egui::vec2(tw * scale, th * scale);
+            ui.image(egui::load::SizedTexture::new(texture.id(), size));
+            ui.add_space(4.0);
+        } else {
+            // Show a spinner while loading thumbnail
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Loading preview…");
+            });
+            ui.add_space(4.0);
+        }
+
         let Some(exif) = app.exif_cache.get(path) else {
-            ui.spinner();
-            ui.weak("Loading…");
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Loading EXIF…");
+            });
             return;
         };
 

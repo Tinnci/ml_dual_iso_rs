@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
 use dual_iso_core::{ExifInfo, ProcessConfig};
-use egui::DroppedFile;
+use egui::{ColorImage, DroppedFile, TextureHandle};
 
 use crate::panels::{ExifPanel, FilesPanel, ProgressPanel, SettingsPanel};
 
@@ -44,18 +44,25 @@ pub struct App {
     pub exif_cache: HashMap<PathBuf, ExifInfo>,
     /// Sender half for background EXIF loads (files.rs uses this).
     pub exif_tx: Sender<(PathBuf, ExifInfo)>,
+    /// Preview thumbnail cache: path → egui TextureHandle.
+    pub preview_cache: HashMap<PathBuf, TextureHandle>,
+    /// Sender half for background thumbnail loads.
+    pub preview_tx: Sender<(PathBuf, ColorImage)>,
 
     // Channel for background thread → UI communication.
     msg_rx: Receiver<TaskMsg>,
     msg_tx: Sender<TaskMsg>,
     // Channel for EXIF background loads.
     exif_rx: Receiver<(PathBuf, ExifInfo)>,
+    // Channel for thumbnail background loads.
+    preview_rx: Receiver<(PathBuf, ColorImage)>,
 }
 
 impl App {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<TaskMsg>();
         let (exif_tx, exif_rx) = std::sync::mpsc::channel::<(PathBuf, ExifInfo)>();
+        let (preview_tx, preview_rx) = std::sync::mpsc::channel::<(PathBuf, ColorImage)>();
         Self {
             files: Vec::new(),
             config: ProcessConfig::default(),
@@ -65,9 +72,12 @@ impl App {
             selected_file: None,
             exif_cache: HashMap::new(),
             exif_tx,
+            preview_cache: HashMap::new(),
+            preview_tx,
             msg_rx: rx,
             msg_tx: tx,
             exif_rx,
+            preview_rx,
         }
     }
 
@@ -143,7 +153,7 @@ impl App {
         });
     }
 
-    fn poll_messages(&mut self) {
+    fn poll_messages(&mut self, ctx: &egui::Context) {
         for msg in self.msg_rx.try_iter() {
             match msg {
                 TaskMsg::Progress { file, done, total } => {
@@ -163,12 +173,18 @@ impl App {
         for (path, exif) in self.exif_rx.try_iter() {
             self.exif_cache.insert(path, exif);
         }
+        // Drain completed thumbnail loads and register textures.
+        for (path, color_image) in self.preview_rx.try_iter() {
+            let key = path.to_string_lossy().into_owned();
+            let handle = ctx.load_texture(key, color_image, egui::TextureOptions::default());
+            self.preview_cache.insert(path, handle);
+        }
     }
 }
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_messages();
+        self.poll_messages(ctx);
 
         // Handle drag-and-drop.
         let dropped: Vec<PathBuf> = ctx.input(|i| {

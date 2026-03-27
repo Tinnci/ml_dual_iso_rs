@@ -14,6 +14,7 @@ impl FilesPanel {
 
         let mut remove_idx: Option<usize> = None;
         let mut load_exif_for: Option<std::path::PathBuf> = None;
+        let mut load_preview_for: Option<std::path::PathBuf> = None;
 
         egui::ScrollArea::vertical()
             .max_height(200.0)
@@ -34,6 +35,9 @@ impl FilesPanel {
                             if !app.exif_cache.contains_key(path) {
                                 load_exif_for = Some(path.clone());
                             }
+                            if !app.preview_cache.contains_key(path) {
+                                load_preview_for = Some(path.clone());
+                            }
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("✕").clicked() {
@@ -52,6 +56,19 @@ impl FilesPanel {
                 let raw = dual_iso_core::raw_io::read_raw(&path_clone);
                 if let Ok(img) = raw {
                     let _ = tx.send((path_clone, img.meta.exif));
+                }
+            });
+        }
+
+        // Kick off thumbnail extraction on a background thread.
+        if let Some(p) = load_preview_for {
+            let path_clone = p.clone();
+            let tx = app.preview_tx.clone();
+            std::thread::spawn(move || {
+                if let Some((w, h, rgb)) = dual_iso_core::raw_io::extract_thumbnail(&path_clone) {
+                    let size = [w as usize, h as usize];
+                    let color_image = egui::ColorImage::from_rgb(size, &rgb);
+                    let _ = tx.send((path_clone, color_image));
                 }
             });
         }

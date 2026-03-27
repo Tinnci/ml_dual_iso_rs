@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 
-use crate::types::{InterpolationMethod, ProcessConfig, RawBuffer, RawMetadata};
+use crate::types::{EV_RESOLUTION, InterpolationMethod, ProcessConfig, RawBuffer, RawMetadata};
 
 /// Despeckle and interpolate a half-resolution Bayer buffer back to full
 /// spatial resolution by filling in the missing rows that were removed
@@ -61,228 +61,149 @@ fn interp_mean23(buf: &RawBuffer) -> RawBuffer {
     out
 }
 
-// ─── AMaZE + edge-directed interpolation ───────────────────────────────────
+// ─── AMaZE edge-directed interpolation in EV space ──────────────────────────
 
-/// AMaZE-based edge-directed interpolation.
+/// AMaZE-inspired edge-directed row interpolation.
 ///
-/// This is a Rust port of the core AMaZE demosaic algorithm from RawTherapee
-/// (originally by Emil Martinec and used in the Magic Lantern cr2hdr tool).
-///
-/// The algorithm:
-///   1. Interpolate the green channel using horizontal and vertical gradient
-///      maps to determine edge direction.
-///   2. Use the green channel as a predictor for red and blue interpolation.
-fn interp_amaze_edge(buf: &RawBuffer, _ev2raw: &[u16], _raw2ev: &[i32]) -> RawBuffer {
+/// Improvements over simple bilinear:
+///   1. All blending is done in EV (log) space via the ev2raw/raw2ev lookup
+///      tables, which gives perceptually uniform results and handles shadows
+///      much better than linear averaging.
+///   2. Adaptive horizontal ↔ vertical weighting: for each missing pixel we
+///      compute directional gradient magnitudes in EV space and up-weight the
+///      direction that crosses fewer hard edges.
+///   3. Diagonal neighbours (±2 columns in the same Bayer phase) are used to
+///      construct two additional diagonal estimates, further reducing aliasing
+///      on angled edges.
+fn interp_amaze_edge(buf: &RawBuffer, ev2raw: &[u16], raw2ev: &[i32]) -> RawBuffer {
     let w = buf.width;
     let h = buf.height;
     let out_h = h * 2;
+    let ev2raw_len = ev2raw.len() as i32;
+    let min_ev: i32 = -10 * EV_RESOLUTION;
 
-    // ── Step 0: expand raw Bayer data into a float workspace ────────────────
-    // We work in float throughout to avoid precision loss.
-    let expanded_h = out_h;
-    let mut green = vec![0f32; w * expanded_h];
-    let mut red = vec![0f32; w * expanded_h];
-    let mut blue = vec![0f32; w * expanded_h];
+    // ── Helper: raw → EV index (safe) ───────────────────────────────────────
+    // raw2ev has 1M entries; pixel values are u16 (≤65535), so always in range.
+    let r2e = |px: u16| raw2ev[px as usize];
 
-    // Copy known rows (even) and mark unknown rows (odd) as -1.
+    // ── Helper: EV index → raw (clamped) ────────────────────────────────────
+    let e2r = |ev: i32| -> u16 {
+        let idx = (ev - min_ev).clamp(0, ev2raw_len - 1) as usize;
+        ev2raw[idx]
+    };
+
+    // ── Step 1: copy known rows into even output positions ───────────────────
+    let mut out = RawBuffer::new(w, out_h);
     for y in 0..h {
-        let dy = y * 2;
-        for x in 0..w {
-            let v = buf.pixel(x, y) as f32;
-            // RGGB pattern: (x%2, dy%2) → channel
-            match (x % 2, dy % 2) {
-                (0, 0) => {
-                    red[dy * w + x] = v;
-                    green[dy * w + x] = -1.0;
-                    blue[dy * w + x] = -1.0;
-                }
-                (1, 0) => {
-                    green[dy * w + x] = v;
-                    red[dy * w + x] = -1.0;
-                    blue[dy * w + x] = -1.0;
-                }
-                (0, 1) => {
-                    green[dy * w + x] = v;
-                    red[dy * w + x] = -1.0;
-                    blue[dy * w + x] = -1.0;
-                }
-                (1, 1) => {
-                    blue[dy * w + x] = v;
-                    green[dy * w + x] = -1.0;
-                    red[dy * w + x] = -1.0;
-                }
-                _ => unreachable!(),
-            }
-        }
-        // Mark odd row as unknown
-        let dy1 = y * 2 + 1;
-        if dy1 < expanded_h {
-            for x in 0..w {
-                green[dy1 * w + x] = -1.0;
-                red[dy1 * w + x] = -1.0;
-                blue[dy1 * w + x] = -1.0;
-            }
-        }
+        let dst = y * 2;
+        out.data[dst * w..(dst + 1) * w].copy_from_slice(&buf.data[y * w..(y + 1) * w]);
     }
 
-    // ── Step 1: interpolate missing rows with edge-directed weighting ────────
-    // Borrow slices so they can be shared across rayon threads.
-    let green_ref: &[f32] = &green;
-    let red_ref: &[f32] = &red;
-    let blue_ref: &[f32] = &blue;
+    // ── Step 2: interpolate each missing odd row in parallel ─────────────────
+    //
+    // For missing row at output y_out = 2*y + 1:
+    //   top row  in input = y     (output y_out - 1)
+    //   bot row  in input = y + 1 (output y_out + 1)
+    //
+    // Bayer channels repeat every 2 in both axes, so "same-channel" horizontal
+    // neighbours are ±2 pixels away.
+    //
+    // We evaluate four blending estimates:
+    //   V  – pure vertical:    EV_avg(top[x],   bot[x])
+    //   D1 – diagonal ↗↙:     EV_avg(top[x+2], bot[x-2])
+    //   D2 – diagonal ↖↘:     EV_avg(top[x-2], bot[x+2])
+    //   H  – horizontal mean: EV_avg(avg_h(top), avg_h(bot)) at same x
+    //
+    // Each estimate is weighted by 1/(1+gradient²) where the gradient is the
+    // directional EV difference that the estimate must "cross".
 
-    let step1: Vec<(f32, f32, f32)> = (0..expanded_h)
+    let missing_rows: Vec<(usize, Vec<u16>)> = (0..h.saturating_sub(1))
         .into_par_iter()
-        .flat_map(|y| {
-            (0..w)
-                .map(move |x| {
-                    let bayer_y = y / 2;
-                    let bayer_row = bayer_y * 2; // corresponding input row
+        .map(|y| {
+            let y_out = y * 2 + 1;
+            let t = &buf.data[y * w..(y + 1) * w];
+            let b = &buf.data[(y + 1) * w..(y + 2) * w];
 
-                    // Known pixel — keep value.
-                    if y % 2 == 0 {
-                        let g = green_ref[y * w + x];
-                        let r = red_ref[y * w + x];
-                        let b = blue_ref[y * w + x];
-                        return (g, r, b);
-                    }
+            let mut row = vec![0u16; w];
+            for x in 0..w {
+                // EV of immediate vertical neighbours
+                let ev_t = r2e(t[x]);
+                let ev_b = r2e(b[x]);
 
-                    // Interpolate this odd row from the two bracketing even rows.
-                    let y0 = if bayer_row < expanded_h {
-                        bayer_row
-                    } else {
-                        expanded_h - 2
-                    };
-                    let y1 = (y0 + 2).min(expanded_h - 1);
+                // EV of diagonal same-phase neighbours (clamp at edges)
+                let xl2 = x.saturating_sub(2);
+                let xr2 = (x + 2).min(w - 1);
 
-                    let g0 = green_ref[y0 * w + x];
-                    let g1 = green_ref[y1 * w + x];
-                    let r0 = red_ref[y0 * w + x];
-                    let r1 = red_ref[y1 * w + x];
-                    let b0 = blue_ref[y0 * w + x];
-                    let b1 = blue_ref[y1 * w + x];
+                let ev_tl = r2e(t[xl2]);
+                let ev_tr = r2e(t[xr2]);
+                let ev_bl = r2e(b[xl2]);
+                let ev_br = r2e(b[xr2]);
 
-                    (avg_valid(g0, g1), avg_valid(r0, r1), avg_valid(b0, b1))
-                })
-                .collect::<Vec<_>>()
+                // ── Four estimates (EV space) ──────────────────────────────
+                // V: straightforward top↔bottom average
+                let est_v = (ev_t + ev_b) / 2;
+
+                // D1: top-right ↔ bottom-left  (↗ diagonal edge)
+                let est_d1 = (ev_tr + ev_bl) / 2;
+
+                // D2: top-left ↔ bottom-right  (↖ diagonal edge)
+                let est_d2 = (ev_tl + ev_br) / 2;
+
+                // H: horizontal same-channel average within each row, then V
+                let ev_th = (ev_tl + ev_tr) / 2;
+                let ev_bh = (ev_bl + ev_br) / 2;
+                let est_h = (ev_th + ev_bh) / 2;
+
+                // ── Gradient magnitudes for each direction ─────────────────
+                // "Cost" of the vertical estimate = vertical EV change
+                let gv = (ev_t - ev_b).unsigned_abs();
+
+                // Cost of D1 = top-right – bottom-left spread
+                let gd1 = (ev_tr - ev_bl).unsigned_abs();
+
+                // Cost of D2 = top-left – bottom-right spread
+                let gd2 = (ev_tl - ev_br).unsigned_abs();
+
+                // Cost of H = horizontal smoothness (large = strong horiz edge)
+                let gh = ((ev_tl - ev_tr).unsigned_abs() + (ev_bl - ev_br).unsigned_abs()) / 2;
+
+                // ── Inverse-gradient weights (soft, squared denominator) ───
+                // Scale by EV_RESOLUTION so we work in units of ~1 EV for the
+                // squared denominator, preventing numerical issues.
+                let eps = EV_RESOLUTION as u32; // 1 EV
+                let wv = 1.0_f64 / (1.0 + (gv as f64 / eps as f64).powi(2));
+                let wd1 = 1.0_f64 / (1.0 + (gd1 as f64 / eps as f64).powi(2));
+                let wd2 = 1.0_f64 / (1.0 + (gd2 as f64 / eps as f64).powi(2));
+                let wh = 1.0_f64 / (1.0 + (gh as f64 / eps as f64).powi(2));
+
+                let total_w = wv + wd1 + wd2 + wh;
+                let ev_mixed = if total_w > 1e-12 {
+                    ((est_v as f64 * wv
+                        + est_d1 as f64 * wd1
+                        + est_d2 as f64 * wd2
+                        + est_h as f64 * wh)
+                        / total_w) as i32
+                } else {
+                    est_v
+                };
+
+                row[x] = e2r(ev_mixed);
+            }
+            (y_out, row)
         })
         .collect();
 
-    // ── Step 2: fill in the missing Bayer channels per-pixel ─────────────
-    let mut out = RawBuffer::new(w, expanded_h);
+    // Write rows back (order doesn't matter; each y_out is unique).
+    for (y_out, row) in missing_rows {
+        out.data[y_out * w..(y_out + 1) * w].copy_from_slice(&row);
+    }
 
-    for y in 0..expanded_h {
-        for x in 0..w {
-            let idx = y * w + x;
-            let (g, r, b) = step1[idx];
-
-            // The raw output contains only the Bayer channel at (x,y);
-            // for the missing channels we need demosaic interpolation.
-            // Choose the channel whose Bayer position this is.
-            let val = match (x % 2, y % 2) {
-                (0, 0) => {
-                    if r >= 0.0 {
-                        r
-                    } else {
-                        avg_neighbors_red(&step1, x, y, w, expanded_h)
-                    }
-                }
-                (1, 0) | (0, 1) => {
-                    if g >= 0.0 {
-                        g
-                    } else {
-                        avg_neighbors_green(&step1, x, y, w, expanded_h)
-                    }
-                }
-                (1, 1) => {
-                    if b >= 0.0 {
-                        b
-                    } else {
-                        avg_neighbors_blue(&step1, x, y, w, expanded_h)
-                    }
-                }
-                _ => unreachable!(),
-            };
-
-            out.set_pixel(x, y, val.max(0.0).min(u16::MAX as f32) as u16);
-        }
+    // Last odd row (no lower neighbour): replicate last known row.
+    let last_odd = (h - 1) * 2 + 1;
+    if last_odd < out_h {
+        let src = (h - 1) * 2;
+        out.data.copy_within(src * w..(src + 1) * w, last_odd * w);
     }
 
     out
-}
-
-#[inline]
-fn avg_valid(a: f32, b: f32) -> f32 {
-    match (a >= 0.0, b >= 0.0) {
-        (true, true) => (a + b) * 0.5,
-        (true, false) => a,
-        (false, true) => b,
-        (false, false) => -1.0,
-    }
-}
-
-fn avg_neighbors_green(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h: usize) -> f32 {
-    let mut sum = 0f32;
-    let mut n = 0u32;
-    for dy in [-2i64, 0, 2] {
-        for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let nx = x as i64 + dx;
-            let ny = y as i64 + dy;
-            if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
-                let g = buf[(ny as usize) * w + (nx as usize)].0;
-                if g >= 0.0 {
-                    sum += g;
-                    n += 1;
-                }
-            }
-        }
-    }
-    if n > 0 { sum / n as f32 } else { 0.0 }
-}
-
-fn avg_neighbors_red(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h: usize) -> f32 {
-    let mut sum = 0f32;
-    let mut n = 0u32;
-    for dy in [-2i64, 0, 2] {
-        for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let nx = x as i64 + dx;
-            let ny = y as i64 + dy;
-            if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
-                let r = buf[(ny as usize) * w + (nx as usize)].1;
-                if r >= 0.0 {
-                    sum += r;
-                    n += 1;
-                }
-            }
-        }
-    }
-    if n > 0 { sum / n as f32 } else { 0.0 }
-}
-
-fn avg_neighbors_blue(buf: &[(f32, f32, f32)], x: usize, y: usize, w: usize, h: usize) -> f32 {
-    let mut sum = 0f32;
-    let mut n = 0u32;
-    for dy in [-2i64, 0, 2] {
-        for dx in [-2i64, 0, 2] {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let nx = x as i64 + dx;
-            let ny = y as i64 + dy;
-            if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
-                let b = buf[(ny as usize) * w + (nx as usize)].2;
-                if b >= 0.0 {
-                    sum += b;
-                    n += 1;
-                }
-            }
-        }
-    }
-    if n > 0 { sum / n as f32 } else { 0.0 }
 }
