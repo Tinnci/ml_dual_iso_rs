@@ -169,7 +169,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
 
         // Top menu.
-        egui::Panel::top("menu").show(&ctx, |ui| {
+        egui::Panel::top("menu").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Add files…").clicked() {
@@ -190,14 +190,14 @@ impl eframe::App for App {
         });
 
         // Bottom: progress / action bar.
-        egui::Panel::bottom("actions").show(&ctx, |ui| {
+        egui::Panel::bottom("actions").show_inside(ui, |ui| {
             ProgressPanel::show(self, ui, &ctx);
         });
 
         // Left: file list.
         egui::Panel::left("files")
             .default_size(340.0)
-            .show(&ctx, |ui| {
+            .show_inside(ui, |ui| {
                 FilesPanel::show(self, ui);
             });
 
