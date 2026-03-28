@@ -25,13 +25,13 @@ impl ExifPanel {
 
         // ── Dual-ISO analysis ────────────────────────────────────────────
         if let Some(analysis) = app.analysis_cache.get(path) {
-            let (color, icon) = if analysis.is_dual_iso {
-                (egui::Color32::from_rgb(80, 200, 120), "✓")
+            let (color, badge) = if analysis.is_dual_iso {
+                (egui::Color32::from_rgb(80, 200, 120), "DUAL ISO")
             } else {
-                (egui::Color32::from_rgb(200, 120, 80), "✗")
+                (egui::Color32::from_rgb(200, 120, 80), "NOT DUAL ISO")
             };
             ui.horizontal(|ui| {
-                ui.colored_label(color, icon);
+                ui.colored_label(color, badge);
                 ui.label(&analysis.status);
             });
             if analysis.is_dual_iso {

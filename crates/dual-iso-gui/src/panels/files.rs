@@ -31,14 +31,14 @@ impl FilesPanel {
                         // Dual-ISO badge.
                         if let Some(analysis) = app.analysis_cache.get(path) {
                             if analysis.is_dual_iso {
-                                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), "◉")
+                                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), "[D]")
                                     .on_hover_text(format!(
                                         "Dual ISO ({:.0}%)\n{}",
                                         analysis.confidence * 100.0,
                                         analysis.status
                                     ));
                             } else {
-                                ui.colored_label(egui::Color32::GRAY, "○")
+                                ui.colored_label(egui::Color32::GRAY, "[-]")
                                     .on_hover_text(&analysis.status);
                             }
                         } else if !app.analysis_pending.contains(path) {
@@ -61,7 +61,7 @@ impl FilesPanel {
                             }
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("✕").clicked() {
+                            if ui.small_button("x").clicked() {
                                 remove_idx = Some(i);
                             }
                         });

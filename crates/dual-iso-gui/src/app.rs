@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+use std::time::Instant;
 
 use dual_iso_core::{DualIsoAnalysis, ExifInfo, ProcessConfig};
 use egui::{ColorImage, DroppedFile, TextureHandle};
@@ -12,13 +13,58 @@ use crate::panels::{ExifPanel, FilesPanel, ProgressPanel, SettingsPanel};
 
 #[derive(Debug, Clone)]
 pub enum TaskMsg {
+    /// One file completed (or started).
     Progress {
+        /// Short display label for this update.
         file: String,
         done: usize,
         total: usize,
+        /// Elapsed seconds since batch start.
+        elapsed_secs: f64,
+        /// Whether this was a success (true) or error (false).
+        ok: bool,
     },
     Done,
     Error(String),
+}
+
+/// ETA / progress bookkeeping.
+#[derive(Debug, Default, Clone)]
+pub struct BatchProgress {
+    pub done: usize,
+    pub total: usize,
+    pub elapsed_secs: f64,
+    /// Estimated seconds remaining (None if not enough data).
+    pub eta_secs: Option<f64>,
+    /// Latest file label.
+    pub current_file: String,
+}
+
+impl BatchProgress {
+    /// Compute ETA from elapsed + done/total.
+    fn from_msg(file: String, done: usize, total: usize, elapsed_secs: f64) -> Self {
+        let eta_secs = if done > 0 && done < total {
+            let rate = elapsed_secs / done as f64; // secs per file
+            Some(rate * (total - done) as f64)
+        } else {
+            None
+        };
+        Self {
+            done,
+            total,
+            elapsed_secs,
+            eta_secs,
+            current_file: file,
+        }
+    }
+
+    pub fn fraction(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.done as f32 / self.total as f32
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -38,6 +84,8 @@ pub struct App {
     pub status: AppStatus,
     pub progress_msg: String,
     pub log: Vec<String>,
+    /// Current batch processing progress + ETA.
+    pub batch_progress: BatchProgress,
     /// Index of the currently selected file in the list.
     pub selected_file: Option<usize>,
     /// EXIF metadata cache: path → ExifInfo.
@@ -78,6 +126,7 @@ impl App {
             status: AppStatus::Idle,
             progress_msg: String::new(),
             log: Vec::new(),
+            batch_progress: BatchProgress::default(),
             selected_file: None,
             exif_cache: HashMap::new(),
             exif_tx,
@@ -108,6 +157,7 @@ impl App {
         }
         self.status = AppStatus::Running;
         self.log.clear();
+        self.batch_progress = BatchProgress::default();
 
         let files = self.files.clone();
         let config = self.config.clone();
@@ -118,6 +168,7 @@ impl App {
             use rayon::prelude::*;
             use std::sync::atomic::{AtomicUsize, Ordering};
 
+            let start = Instant::now();
             let done_count = AtomicUsize::new(0);
 
             // Process files in parallel via rayon.
@@ -145,17 +196,23 @@ impl App {
                     })();
 
                     let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    let msg = match &result {
-                        Ok(out) => format!(
-                            "✓ {name} → {}",
-                            out.file_name().unwrap_or_default().to_string_lossy()
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let (msg, ok) = match &result {
+                        Ok(out) => (
+                            format!(
+                                "[OK] {name} -> {}",
+                                out.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                            true,
                         ),
-                        Err(e) => format!("✗ {name}: {e:#}"),
+                        Err(e) => (format!("[FAIL] {name}: {e:#}"), false),
                     };
                     let _ = tx.send(TaskMsg::Progress {
                         file: msg,
                         done,
                         total,
+                        elapsed_secs: elapsed,
+                        ok,
                     });
                     ctx.request_repaint();
 
@@ -178,9 +235,24 @@ impl App {
     fn poll_messages(&mut self, ctx: &egui::Context) {
         for msg in self.msg_rx.try_iter() {
             match msg {
-                TaskMsg::Progress { file, done, total } => {
-                    self.progress_msg = format!("[{done}/{total}] {file}");
-                    self.log.push(self.progress_msg.clone());
+                TaskMsg::Progress {
+                    file,
+                    done,
+                    total,
+                    elapsed_secs,
+                    ok,
+                } => {
+                    self.batch_progress =
+                        BatchProgress::from_msg(file.clone(), done, total, elapsed_secs);
+                    let prefix = if ok { "[OK]" } else { "[FAIL]" };
+                    // Avoid double-prefix since file already contains it.
+                    let log_line = if file.starts_with('[') {
+                        file.clone()
+                    } else {
+                        format!("{prefix} {file}")
+                    };
+                    self.progress_msg = format!("{done}/{total}  {file}");
+                    self.log.push(log_line);
                 }
                 TaskMsg::Error(e) => {
                     self.log.push(format!("ERROR: {e}"));
