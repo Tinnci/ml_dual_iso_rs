@@ -151,6 +151,12 @@ pub fn extract_thumbnail(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, rgb.into_raw()))
 }
 
+/// Read a RAW file and perform quick dual-ISO analysis.
+pub fn analyze_file(path: &Path) -> Result<crate::types::DualIsoAnalysis, crate::DualIsoError> {
+    let raw = read_raw(path)?;
+    Ok(crate::quick_analyze(&raw))
+}
+
 fn cfa_to_bayer(name: &str) -> BayerPattern {
     match name.to_uppercase().as_str() {
         "RGGB" => BayerPattern::Rggb,

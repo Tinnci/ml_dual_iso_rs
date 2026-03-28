@@ -23,6 +23,29 @@ impl ExifPanel {
         ui.label(egui::RichText::new(&name).strong());
         ui.add_space(4.0);
 
+        // ── Dual-ISO analysis ────────────────────────────────────────────
+        if let Some(analysis) = app.analysis_cache.get(path) {
+            let (color, icon) = if analysis.is_dual_iso {
+                (egui::Color32::from_rgb(80, 200, 120), "✓")
+            } else {
+                (egui::Color32::from_rgb(200, 120, 80), "✗")
+            };
+            ui.horizontal(|ui| {
+                ui.colored_label(color, icon);
+                ui.label(&analysis.status);
+            });
+            if analysis.is_dual_iso {
+                ui.horizontal(|ui| {
+                    ui.weak(format!(
+                        "Pattern: {}  Confidence: {:.0}%",
+                        analysis.pattern,
+                        analysis.confidence * 100.0
+                    ));
+                });
+            }
+            ui.add_space(4.0);
+        }
+
         // ── Preview thumbnail ──────────────────────────────────────────────
         if let Some(texture) = app.preview_cache.get(path) {
             let avail_w = ui.available_width();

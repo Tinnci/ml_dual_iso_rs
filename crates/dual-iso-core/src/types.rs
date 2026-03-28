@@ -57,6 +57,27 @@ impl IsoLinePattern {
     }
 }
 
+// ─── Dual-ISO analysis result ───────────────────────────────────────────────
+
+/// Quick pre-processing analysis result: is this image dual-ISO?
+#[derive(Debug, Clone)]
+pub struct DualIsoAnalysis {
+    /// Whether the image appears to be dual-ISO.
+    pub is_dual_iso: bool,
+    /// Confidence score 0.0–1.0.
+    pub confidence: f64,
+    /// Per-phase mean pixel values (`y % 4`).
+    pub phase_means: [f64; 4],
+    /// Row pattern string (e.g. "BdBd").
+    pub pattern: String,
+    /// Estimated low-ISO value.
+    pub iso_low: u32,
+    /// Estimated high-ISO value.
+    pub iso_high: u32,
+    /// Human-readable status message.
+    pub status: String,
+}
+
 // ─── Raw pixel buffer ───────────────────────────────────────────────────────
 
 /// A 16-bit Bayer pixel buffer (row-major).

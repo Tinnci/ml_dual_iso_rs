@@ -15,6 +15,7 @@ impl FilesPanel {
         let mut remove_idx: Option<usize> = None;
         let mut load_exif_for: Option<std::path::PathBuf> = None;
         let mut load_preview_for: Option<std::path::PathBuf> = None;
+        let mut analyze_for: Vec<std::path::PathBuf> = Vec::new();
 
         egui::ScrollArea::vertical()
             .max_height(200.0)
@@ -27,6 +28,26 @@ impl FilesPanel {
 
                     let selected = app.selected_file == Some(i);
                     ui.horizontal(|ui| {
+                        // Dual-ISO badge.
+                        if let Some(analysis) = app.analysis_cache.get(path) {
+                            if analysis.is_dual_iso {
+                                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), "◉")
+                                    .on_hover_text(format!(
+                                        "Dual ISO ({:.0}%)\n{}",
+                                        analysis.confidence * 100.0,
+                                        analysis.status
+                                    ));
+                            } else {
+                                ui.colored_label(egui::Color32::GRAY, "○")
+                                    .on_hover_text(&analysis.status);
+                            }
+                        } else if !app.analysis_pending.contains(path) {
+                            ui.spinner();
+                            analyze_for.push(path.clone());
+                        } else {
+                            ui.spinner();
+                        }
+
                         let resp = ui
                             .selectable_label(selected, &name)
                             .on_hover_text(path.display().to_string());
@@ -47,6 +68,17 @@ impl FilesPanel {
                     });
                 }
             });
+
+        // Launch background dual-ISO analysis for newly added files.
+        for p in analyze_for {
+            app.analysis_pending.insert(p.clone());
+            let tx = app.analysis_tx.clone();
+            std::thread::spawn(move || {
+                if let Ok(analysis) = dual_iso_core::raw_io::analyze_file(&p) {
+                    let _ = tx.send((p, analysis));
+                }
+            });
+        }
 
         // Kick off a blocking EXIF read on a background thread.
         if let Some(p) = load_exif_for {

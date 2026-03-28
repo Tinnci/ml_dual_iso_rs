@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
-use dual_iso_core::{ExifInfo, ProcessConfig};
+use dual_iso_core::{DualIsoAnalysis, ExifInfo, ProcessConfig};
 use egui::{ColorImage, DroppedFile, TextureHandle};
 
 use crate::panels::{ExifPanel, FilesPanel, ProgressPanel, SettingsPanel};
@@ -48,6 +48,12 @@ pub struct App {
     pub preview_cache: HashMap<PathBuf, TextureHandle>,
     /// Sender half for background thumbnail loads.
     pub preview_tx: Sender<(PathBuf, ColorImage)>,
+    /// Dual-ISO detection result cache: path → analysis.
+    pub analysis_cache: HashMap<PathBuf, DualIsoAnalysis>,
+    /// Sender half for background dual-ISO analysis.
+    pub analysis_tx: Sender<(PathBuf, DualIsoAnalysis)>,
+    /// Paths for which analysis has already been requested.
+    pub analysis_pending: HashSet<PathBuf>,
 
     // Channel for background thread → UI communication.
     msg_rx: Receiver<TaskMsg>,
@@ -56,6 +62,8 @@ pub struct App {
     exif_rx: Receiver<(PathBuf, ExifInfo)>,
     // Channel for thumbnail background loads.
     preview_rx: Receiver<(PathBuf, ColorImage)>,
+    // Channel for dual-ISO analysis results.
+    analysis_rx: Receiver<(PathBuf, DualIsoAnalysis)>,
 }
 
 impl App {
@@ -63,6 +71,7 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel::<TaskMsg>();
         let (exif_tx, exif_rx) = std::sync::mpsc::channel::<(PathBuf, ExifInfo)>();
         let (preview_tx, preview_rx) = std::sync::mpsc::channel::<(PathBuf, ColorImage)>();
+        let (analysis_tx, analysis_rx) = std::sync::mpsc::channel::<(PathBuf, DualIsoAnalysis)>();
         Self {
             files: Vec::new(),
             config: ProcessConfig::default(),
@@ -74,10 +83,14 @@ impl App {
             exif_tx,
             preview_cache: HashMap::new(),
             preview_tx,
+            analysis_cache: HashMap::new(),
+            analysis_tx,
+            analysis_pending: HashSet::new(),
             msg_rx: rx,
             msg_tx: tx,
             exif_rx,
             preview_rx,
+            analysis_rx,
         }
     }
 
@@ -102,52 +115,61 @@ impl App {
         let total = files.len();
 
         thread::spawn(move || {
-            for (i, path) in files.iter().enumerate() {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+            use rayon::prelude::*;
+            use std::sync::atomic::{AtomicUsize, Ordering};
 
-                let _ = tx.send(TaskMsg::Progress {
-                    file: name.clone(),
-                    done: i,
-                    total,
-                });
-                ctx.request_repaint();
+            let done_count = AtomicUsize::new(0);
 
-                // Read → process → write.
-                let result = (|| -> anyhow::Result<PathBuf> {
-                    let raw = dual_iso_core::raw_io::read_raw(path)?;
-                    let processed = dual_iso_core::process(raw, &config)?;
-                    let out = {
-                        let stem = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("output");
-                        let dir = path.parent().unwrap_or(std::path::Path::new("."));
-                        dir.join(format!("{stem}.DNG"))
+            // Process files in parallel via rayon.
+            let results: Vec<(String, Result<PathBuf, String>)> = files
+                .par_iter()
+                .map(|path| {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+
+                    let result = (|| -> anyhow::Result<PathBuf> {
+                        let raw = dual_iso_core::raw_io::read_raw(path)?;
+                        let processed = dual_iso_core::process(raw, &config)?;
+                        let out = {
+                            let stem = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("output");
+                            let dir = path.parent().unwrap_or(std::path::Path::new("."));
+                            dir.join(format!("{stem}.DNG"))
+                        };
+                        dual_iso_core::dng_output::write_dng(&out, &processed, &config)?;
+                        Ok(out)
+                    })();
+
+                    let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let msg = match &result {
+                        Ok(out) => format!(
+                            "✓ {name} → {}",
+                            out.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        Err(e) => format!("✗ {name}: {e:#}"),
                     };
-                    dual_iso_core::dng_output::write_dng(&out, &processed, &config)?;
-                    Ok(out)
-                })();
+                    let _ = tx.send(TaskMsg::Progress {
+                        file: msg,
+                        done,
+                        total,
+                    });
+                    ctx.request_repaint();
 
-                match result {
-                    Ok(out) => {
-                        let _ = tx.send(TaskMsg::Progress {
-                            file: format!(
-                                "✓ {name} → {}",
-                                out.file_name().unwrap_or_default().to_string_lossy()
-                            ),
-                            done: i + 1,
-                            total,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(TaskMsg::Error(format!("{name}: {e:#}")));
-                    }
+                    (name, result.map_err(|e| format!("{e:#}")))
+                })
+                .collect();
+
+            // Report any errors.
+            for (name, result) in &results {
+                if let Err(e) = result {
+                    let _ = tx.send(TaskMsg::Error(format!("{name}: {e}")));
                 }
-                ctx.request_repaint();
             }
+
             let _ = tx.send(TaskMsg::Done);
             ctx.request_repaint();
         });
@@ -178,6 +200,10 @@ impl App {
             let key = path.to_string_lossy().into_owned();
             let handle = ctx.load_texture(key, color_image, egui::TextureOptions::default());
             self.preview_cache.insert(path, handle);
+        }
+        // Drain completed dual-ISO analysis results.
+        for (path, analysis) in self.analysis_rx.try_iter() {
+            self.analysis_cache.insert(path, analysis);
         }
     }
 }
