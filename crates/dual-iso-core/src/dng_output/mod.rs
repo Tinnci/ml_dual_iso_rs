@@ -65,10 +65,16 @@ fn write_dng_deflate(path: &Path, image: &RawImage) -> Result<(), DualIsoError> 
     let strip_bytes_compressed = compressed.len() as u32;
     let layout = IfdLayout::build(image, true);
 
-    let mut out: Vec<u8> =
-        Vec::with_capacity(layout.strip_off as usize + compressed.len());
+    let mut out: Vec<u8> = Vec::with_capacity(layout.strip_off as usize + compressed.len());
     write_tiff_header(&mut out);
-    layout.write_ifd(&mut out, image, w as u32, h as u32, strip_bytes_compressed, true);
+    layout.write_ifd(
+        &mut out,
+        image,
+        w as u32,
+        h as u32,
+        strip_bytes_compressed,
+        true,
+    );
     layout.write_blobs(&mut out);
     out.extend_from_slice(&compressed);
 
@@ -172,23 +178,16 @@ impl IfdLayout {
         let (unique_len, unique_val) = alloc_or_inline(unique_bytes);
 
         let black = image.meta.black_level as u32;
-        let black_rational: Vec<u8> = [black, 1u32]
-            .iter()
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
+        let black_rational: Vec<u8> = [black, 1u32].iter().flat_map(|v| v.to_le_bytes()).collect();
         let black_rat_off = cursor;
         cursor += padded(black_rational.len());
         blobs.push(black_rational);
 
         // Identity 3x3 SRATIONAL ColorMatrix1 (9 * 8 = 72 bytes)
-        let color_matrix: Vec<u8> = [
-            1i32, 1, 0, 1, 0, 1,
-            0, 1, 1, 1, 0, 1,
-            0, 1, 0, 1, 1, 1,
-        ]
-        .iter()
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
+        let color_matrix: Vec<u8> = [1i32, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
         let color_mat_off = cursor;
         cursor += padded(color_matrix.len());
         blobs.push(color_matrix);
@@ -338,7 +337,10 @@ mod tests {
             let val_bytes = &data[off + 8..off + 12];
             let val = u32::from_le_bytes(val_bytes.try_into().unwrap());
 
-            assert!(tag > prev_tag, "IFD tags must be strictly ascending: {prev_tag} -> {tag}");
+            assert!(
+                tag > prev_tag,
+                "IFD tags must be strictly ascending: {prev_tag} -> {tag}"
+            );
             prev_tag = tag;
 
             let elem_size = match typ {
